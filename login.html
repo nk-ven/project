@@ -33,7 +33,7 @@
                 <a class="btn btn-link" href="register.html">Create an account</a>
                 <button id="forgotLink" type="button" class="btn btn-link" data-bs-toggle="modal" data-bs-target="#resetModal">Forgot password?</button>
               </form>
-              <div id="loginAlert" class="mt-3"></div>
+              <div id="loginAlert" class="mt-3" aria-live="polite"></div>
             </div>
           </div>
         </div>
@@ -54,7 +54,7 @@
                 <label class="form-label">Email</label>
                 <input type="email" class="form-control" id="resetEmail" required>
               </div>
-              <div id="resetAlert"></div>
+                <div id="resetAlert" aria-live="polite"></div>
               <button type="submit" class="btn btn-primary">Send reset email</button>
             </form>
           </div>
