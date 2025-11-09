@@ -10,14 +10,24 @@ Features
 
 Setup
 1. Create a Firebase project at https://console.firebase.google.com
-2. Enable Authentication -> Email/Password
-3. Enable Firestore (start in test mode for development)
-4. Enable Storage
-5. Create a Web App in Firebase and copy the config
-6. Open `js/firebase-config.js` and replace the placeholder values with your Firebase config
+2. Enable **Authentication → Email/Password**
+3. Enable **Firestore** (start in test mode for development)
+4. Enable **Storage**
+5. Create a Web App in Firebase and copy the config values
+6. Open `js/firebase-config.js` and replace the placeholder values with your config
+7. **Enable the Cloud Firestore API** in the Google Cloud Console (https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=<your-project-id>).  
+   - Select the same project ID shown in Firebase (e.g. `start-aa0c2`).  
+   - Click **Enable**. If you just enabled it, wait a minute before retrying profile saves—our fallback uses the REST API and will throw the “Cloud Firestore API has not been used…” error until this step is completed.
 
 Running locally
-- This is static HTML/JS. You can open `index.html` directly in your browser, or serve with a simple static server.
+1. Install deps once: `npm install`
+2. Start the static server: `npm run start` (serves at http://127.0.0.1:8000)
+   - Alternatively you can open the HTML files directly, but running through `http-server` avoids browser restrictions around file uploads.
+
+Auth experience
+- Every page includes the Firebase SDK; if you’re already signed in, guest-only pages (`index.html`, `register.html`, `login.html`) automatically redirect you to `profile.html`.
+- The navbar and landing hero show Register/Login buttons for guests and your name/email + Profile/Logout buttons once authenticated.
+- The profile form uploads optional photos to Storage and writes to Firestore. If Firestore’s streaming transport is blocked (common on VPNs), the UI retries via the REST API—you still need the Cloud Firestore API enabled (see step 7).
 
 Notes & Security
 - Firestore rules should be configured to restrict who can read/write student documents in production.

@@ -28,18 +28,12 @@ const firebaseConfig = {
     const storage = firebase.storage();
 
     // Helps in corporate/VPN environments that block the default Firestore streaming transport.
-    const hostname = (window.location && window.location.hostname) || '';
-    const forceLongPolling = typeof window.FORCE_FIRESTORE_LONG_POLLING === 'boolean'
-      ? window.FORCE_FIRESTORE_LONG_POLLING
-      : hostname === 'localhost' || hostname === '127.0.0.1';
     const firestoreSettings = {
       ignoreUndefinedProperties: true,
       experimentalAutoDetectLongPolling: true,
+      experimentalForceLongPolling: true,
       useFetchStreams: false
     };
-    if (forceLongPolling) {
-      firestoreSettings.experimentalForceLongPolling = true;
-    }
     try {
       if (!firestore._settingsFrozen) {
         firestore.settings(firestoreSettings);

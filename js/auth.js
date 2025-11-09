@@ -16,8 +16,12 @@
     resetAlert: document.getElementById('resetAlert'),
     profileForm: document.getElementById('profileForm'),
     profileAlert: document.getElementById('profileAlert'),
-    logoutBtn: document.getElementById('logoutBtn'),
     studentsList: document.getElementById('studentsList'),
+    navGuestSections: Array.from(document.querySelectorAll('[data-nav="guest"]')),
+    navAuthSections: Array.from(document.querySelectorAll('[data-nav="auth"]')),
+    navUserName: Array.from(document.querySelectorAll('[data-nav-user="name"]')),
+    navUserEmail: Array.from(document.querySelectorAll('[data-nav-user="email"]')),
+    logoutButtons: Array.from(document.querySelectorAll('[data-action="logout"]')),
   };
 
   const placeholderProfilePhoto = (() => {
@@ -27,6 +31,11 @@
     </svg>`;
     return `data:image/svg+xml,${encodeURIComponent(svg.replace(/\s{2,}/g, ' '))}`;
   })();
+  const FIRESTORE_WRITE_TIMEOUT_MS = 8000;
+  const redirectConfig = {
+    whenAuth: document.body?.dataset.redirectWhenAuth || null,
+    whenGuest: document.body?.dataset.redirectWhenGuest || null,
+  };
 
   function escapeHtml(str = '') {
     return String(str).replace(/[&<>"']/g, (char) => ({
@@ -147,26 +156,84 @@
       body: JSON.stringify({ fields: encodeFirestoreFields(data) }),
     });
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Firestore REST fallback failed (${response.status}): ${text || response.statusText}`);
+      let message = await response.text();
+      try {
+        const parsed = JSON.parse(message);
+        message = parsed?.error?.message || message;
+      } catch (_) {
+        // keep original text
+      }
+      const error = new Error(`Firestore REST fallback failed (${response.status}): ${message || response.statusText}`);
+      error.code = 'rest-fallback-failed';
+      throw error;
     }
   }
 
-  async function saveStudentDocument(uid, data, { merge = false } = {}) {
+  function withTimeout(promise, timeoutMs, timeoutMessage) {
+    return new Promise((resolve, reject) => {
+      const id = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      promise.then((value) => {
+        clearTimeout(id);
+        resolve(value);
+      }).catch((err) => {
+        clearTimeout(id);
+        reject(err);
+      });
+    });
+  }
+
+  async function saveStudentDocument(uid, data, { merge = false, alertEl = null } = {}) {
     const docRef = services.db.collection('students').doc(uid);
+    const writePromise = merge ? docRef.set(data, { merge: true }) : docRef.set(data);
     try {
-      if (merge) {
-        await docRef.set(data, { merge: true });
-      } else {
-        await docRef.set(data);
-      }
+      await withTimeout(writePromise, FIRESTORE_WRITE_TIMEOUT_MS, 'firestore-write-timeout');
     } catch (err) {
-      if (shouldAttemptRestFallback(err)) {
+      const timedOut = err && err.message === 'firestore-write-timeout';
+      if (timedOut || shouldAttemptRestFallback(err)) {
+        console.warn('Firestore write failed, attempting REST fallback...', err);
+        if (alertEl) {
+          renderAlert(alertEl, 'warning', 'Network is blocking Firestore. Retrying via fallback...');
+        }
         await saveStudentViaRest(uid, data, { merge });
         return;
       }
       throw err;
     }
+  }
+
+  function redirectTo(target) {
+    if (!target) return false;
+    const trimmed = target.trim();
+    if (!trimmed) return false;
+    const current = window.location.pathname.split('/').pop() || 'index.html';
+    if (current.toLowerCase() === trimmed.toLowerCase()) return false;
+    window.location = trimmed;
+    return true;
+  }
+
+  function updateNavState(user) {
+    const isAuthed = !!user;
+    const authBlocks = [...elements.navAuthSections, ...document.querySelectorAll('[data-section="auth"]')];
+    const guestBlocks = [...elements.navGuestSections, ...document.querySelectorAll('[data-section="guest"]')];
+
+    authBlocks.forEach((section) => {
+      if (!section) return;
+      section.classList.toggle('d-none', !isAuthed);
+    });
+    guestBlocks.forEach((section) => {
+      if (!section) return;
+      section.classList.toggle('d-none', isAuthed);
+    });
+    const name = user?.displayName || '';
+    const email = user?.email || '';
+    elements.navUserName.forEach((el) => {
+      if (!el) return;
+      el.textContent = name || 'Welcome';
+    });
+    elements.navUserEmail.forEach((el) => {
+      if (!el) return;
+      el.textContent = email || '';
+    });
   }
 
   function broadcastFatal(message) {
@@ -179,6 +246,10 @@
   if (!services.auth || !services.db) {
     broadcastFatal('Firebase SDK failed to initialize. Refresh the page and verify js/firebase-config.js is configured.');
     return;
+  }
+
+  if (redirectConfig.whenAuth && services.auth.currentUser) {
+    redirectTo(redirectConfig.whenAuth);
   }
 
   async function uploadProfilePhoto(uid, file) {
@@ -232,7 +303,7 @@
           photoURL: photoURL || null,
           role: 'student',
           createdAt: new Date().toISOString(),
-        });
+        }, { alertEl });
 
         renderAlert(alertEl, 'success', 'Account created. Redirecting to your profile...');
         setTimeout(() => { window.location = 'profile.html'; }, 1200);
@@ -340,17 +411,25 @@
   }
 
   services.auth.onAuthStateChanged(async (user) => {
+    updateNavState(user);
     if (user) {
-      if ((elements.registerForm || elements.loginForm) && !elements.profileForm) {
-        window.location = 'profile.html';
+      if (redirectConfig.whenAuth && redirectTo(redirectConfig.whenAuth)) {
         return;
+      }
+      if ((elements.registerForm || elements.loginForm) && !elements.profileForm) {
+        if (redirectTo('profile.html')) return;
       }
 
       populateProfile(user);
       renderStudents(user);
       bindLogout();
-    } else if (elements.profileForm || elements.studentsList) {
-      window.location = 'login.html';
+    } else {
+      if (redirectConfig.whenGuest && redirectTo(redirectConfig.whenGuest)) {
+        return;
+      }
+      if (elements.profileForm || elements.studentsList) {
+        window.location = 'login.html';
+      }
     }
   });
 
@@ -395,7 +474,7 @@
             photoURL: photoURL || null,
             role: 'student',
             updatedAt: new Date().toISOString(),
-          }, { merge: true });
+          }, { merge: true, alertEl: elements.profileAlert });
 
           renderAlert(elements.profileAlert, 'success', 'Profile updated.');
           setTimeout(() => window.location.reload(), 700);
@@ -461,24 +540,26 @@
   }
 
   function bindLogout() {
-    if (!elements.logoutBtn || elements.logoutBtn.dataset.bound) return;
-    elements.logoutBtn.dataset.bound = 'true';
-    elements.logoutBtn.addEventListener('click', async () => {
-      setButtonLoading(elements.logoutBtn, true, 'Signing out...');
-      try {
-        await services.auth.signOut();
-        window.location = 'index.html';
-      } catch (err) {
-        console.error('Failed to sign out', err);
-        const targetAlert = elements.profileAlert || elements.loginAlert || elements.registerAlert;
-        if (targetAlert) {
-          renderAlert(targetAlert, 'danger', formatError(err));
-        } else {
-          alert(formatError(err));
+    elements.logoutButtons.forEach((button) => {
+      if (!button || button.dataset.bound) return;
+      button.dataset.bound = 'true';
+      button.addEventListener('click', async () => {
+        setButtonLoading(button, true, 'Signing out...');
+        try {
+          await services.auth.signOut();
+          window.location = redirectConfig.whenGuest || 'index.html';
+        } catch (err) {
+          console.error('Failed to sign out', err);
+          const targetAlert = elements.profileAlert || elements.loginAlert || elements.registerAlert;
+          if (targetAlert) {
+            renderAlert(targetAlert, 'danger', formatError(err));
+          } else {
+            alert(formatError(err));
+          }
+        } finally {
+          setButtonLoading(button, false);
         }
-      } finally {
-        setButtonLoading(elements.logoutBtn, false);
-      }
+      });
     });
   }
 })();
